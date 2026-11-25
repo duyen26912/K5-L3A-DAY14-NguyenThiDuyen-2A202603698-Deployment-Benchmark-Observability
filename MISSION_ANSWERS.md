@@ -488,13 +488,72 @@ Kết quả `test_stateless.py`: gửi 5 câu hỏi trong cùng session; các re
 Dọn stack sau khi hoàn tất: `docker compose -p k5-day14-scaling down`.
 
 ## Part 6: Output check_production_ready.py
-(dán phần "📋 Checklist Deliverable")
+Chạy đầy đủ trong môi trường WSL:
+```bash
+cd 06-lab-complete
+../.venv/bin/python check_production_ready.py
+```
+
+Kết quả: **PASS 12/12 tiêu chí · 43/43 checks passed**.
+
+| Tiêu chí | Kết quả |
+|---|---|
+| Dockerfile multi-stage, dưới 500 MB | ✅ Build thành công; image **160 MB**; container chạy và `/health` trả 200 |
+| Docker Compose (agent + Redis) | ✅ |
+| `.dockerignore` | ✅ |
+| Health check `/health` | ✅ |
+| Readiness `/ready` | ✅; Redis mất kết nối thì trả 503, `/health` vẫn 200 |
+| API key authentication | ✅ Key thiếu/sai trả 401; key đúng trả 200 |
+| Rate limiting | ✅ Vượt giới hạn trả 429; state còn sau khi restart agent |
+| Cost guard | ✅ Hết budget trả 402 |
+| Cấu hình environment | ✅ |
+| Structured logging | ✅ 17 dòng log JSON hợp lệ |
+| Graceful shutdown | ✅ Request đang chạy vẫn trả 200; process thoát mã 0; `docker stop` thoát mã 0 trong **0,7–0,9 giây** (qua các lần chạy) |
+| Railway / Render deploy config | ✅ |
+
+Lệnh chạy `--static-only` hoặc `--skip-docker` chỉ kiểm tra một phần; kết quả trên lấy từ chế độ đầy đủ.
+
+**Output "📋 Checklist Deliverable" (nguyên văn, chạy đầy đủ trong WSL với `os.name = posix`, Docker 29.9.3):**
+```text
+================================================================
+  📋 Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 43/43 checks passed
+  🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
+================================================================
+```
+
+Một số dòng chi tiết đáng chú ý trong output:
+```text
+✅ Docker: image < 500 MB — 160 MB
+✅ Khi chạy: vượt giới hạn → 429 — 429 sau 5 request thành công (RATE_LIMIT_PER_MINUTE=5)
+✅ Khi chạy: state nằm trong Redis — restart agent vẫn bị 429
+✅ Khi chạy: Redis mất kết nối → /ready 503 (còn /health vẫn 200)
+✅ Khi chạy: SIGTERM lúc đang có request → request vẫn 200, process tự thoát — exit code 0
+✅ Docker: `docker stop` tắt êm (exit code 0, < 10s) — exit code 0, 0.9s
+```
+
+**Vì sao `/health` trả 200 khi Redis chết còn `/ready` trả 503:** `/health` là liveness: process vẫn sống thì không nên bị platform restart, vì restart cũng không làm Redis sống lại mà còn làm mất các request đang xử lý. `/ready` là readiness: khi mất Redis, agent không làm được rate limit/cost guard/state, nên báo 503 để load balancer tạm ngừng gửi traffic vào cho tới khi Redis kết nối lại.
+
+**Xử lý input sai:** body `/ask` được validate bằng Pydantic (`AskRequest.question: str = Field(..., min_length=1, max_length=2000)`), nên thiếu hoặc rỗng `question` thì FastAPI trả **422** với thông báo rõ ràng, không lộ stack trace.
 
 ## AI log
 | Nội dung | Ghi nhận |
 |---|---|
-| Phần được AI hỗ trợ | Part 1: anti-patterns và so sánh develop/production; Part 2: Dockerfile, multi-stage build và sơ đồ Compose; Part 4.3: kết quả rate limit; Part 5.1–5.5: health/readiness, graceful shutdown, stateless, load balancing và sơ đồ. |
-| Đã hỏi AI | Đọc mã nguồn/hướng dẫn để giải thích khái niệm, rà soát câu trả lời với kết quả terminal, chỉnh nội dung và trình bày bảng/sơ đồ Mermaid. |
-| AI đã làm | Đề xuất và cập nhật `MISSION_ANSWERS.md`; đối chiếu Part 5 với mã nguồn, lưu ý `/health` trả HTTP 200 khi memory ở trạng thái `degraded`, mock đồng bộ chặn event loop, và ứng dụng fallback về RAM khi Redis không kết nối. |
-| Số liệu thực nghiệm | Tôi chạy và cung cấp kết quả terminal (response API, mã HTTP 200/429, image develop 1.15 GB và advanced 163 MB, kết quả Part 5). AI dùng số liệu tôi gửi, không tự tạo số đo. |
-| Tự kiểm tra | Tôi xem lại nội dung cập nhật và đối chiếu với output terminal cùng các file nguồn tương ứng; tôi sẽ tự giải thích ý nghĩa của kết quả và các giới hạn đã ghi. |
+| Phần được AI hỗ trợ | Part 1: anti-patterns và so sánh develop/production; Part 2: Dockerfile, multi-stage build và sơ đồ Compose; Part 4.3: kết quả rate limit; Part 5.1–5.5: health/readiness, graceful shutdown, stateless, load balancing và sơ đồ; Part 6: hoàn thiện agent production theo hợp đồng checker. |
+| Đã hỏi AI | Đọc mã nguồn/hướng dẫn để giải thích khái niệm, rà soát câu trả lời với kết quả terminal, chỉnh nội dung và trình bày bảng/sơ đồ Mermaid; triển khai các TODO của Part 6. |
+| AI đã làm | Cập nhật `MISSION_ANSWERS.md`; hoàn thiện auth, Redis rate limiter/cost guard, config môi trường, JSON logging, health/readiness, graceful shutdown, Docker multi-stage, Compose và Railway/Render config. Checker không bị sửa. |
+| Số liệu thực nghiệm | Các kết quả Part 1–5 trước đây do tôi cung cấp từ terminal. Với Part 6, AI chạy checker đầy đủ trong WSL: **12/12**, image **160 MB**, log JSON **17 dòng**, `docker stop` **0,7 giây**. Không tự tạo số đo. |
+| Kiểm tra đối chiếu | Checker đầy đủ xác nhận 43/43 checks passed. Tôi cần đọc lại phần code và kết quả đã ghi để có thể giải thích cách hoạt động trước khi nộp. |
