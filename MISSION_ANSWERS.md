@@ -630,10 +630,11 @@ Một số dòng chi tiết đáng chú ý trong output:
 ## AI log
 Công cụ: Claude (Claude Code). Không có số đo nào do AI tự đặt ra; mọi số liệu lấy từ lệnh chạy thật trên máy tôi.
 
-| Phần | Tôi nhờ AI | AI đã làm | 
+| Phần | Tôi nhờ AI | AI đã làm |
 |---|---|---|
-| Part 1 | Vì sao `/ask` bản production lỗi 500 | Giải thích: bản này nhận JSON body, không nhận query 
+| Part 1 | Vì sao `/ask` bản production lỗi 500 | Giải thích: bản này nhận JSON body, không nhận query |
 | Part 2, 4, 5 | Ghi kết quả vào bài | Tự chạy lệnh (curl, docker, `test_stateless.py`) lấy output thật và viết câu trả lời; sửa % kích thước image thành 85,9% |
-| Part 6 | Hoàn thiện các TODO | Viết code (auth, rate limit, cost guard, config, log JSON, health/ready, shutdown, Dockerfile, compose, deploy config); chạy checker | 
+| Part 6 | Hoàn thiện các TODO | Viết code (auth, rate limit, cost guard, config, log JSON, health/ready, shutdown, Dockerfile, compose, deploy config); chạy checker |
 | Part 3 | Deploy lên cloud | Hướng dẫn Railway (bị hết trial), chuyển sang Render |
-| Part 7 | Đọc kết quả load test/eval, sửa KB | Đọc file JSON, điền bảng 2.1/2.2/3, chỉ ra keyword thiếu và gợi ý entry KB |
+| Part 7 – Bước 1 (CP7) | Đọc kết quả load test/eval, sửa KB | Đọc file JSON, điền bảng 2.1/2.2/3, chỉ ra keyword thiếu và gợi ý entry KB, viết job CI quality gate |
+| Part 7 – Bước 2 (CP8) | Bật stack observability, kiểm tra ảnh, điền báo cáo | Sửa `production/Dockerfile` (thêm `PYTHONUSERBASE`) khi agent crash; phát hiện benchmark scale đầu tiên chạy sai số instance và hướng dẫn chạy lại với `--no-deps`; tra Jaeger/Prometheus/log để lấy số ms của span, `trace_id` và mốc thời gian alert; điền mục 4–6 của `BENCHMARK_REPORT.md` |
