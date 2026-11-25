@@ -1,4 +1,4 @@
-# Day 14 Lab - Mission Answers
+﻿# Day 14 Lab - Mission Answers
 
 ## Part 1: Localhost vs Production
 ### Exercise 1.1: Anti-patterns found
@@ -204,8 +204,86 @@ Dọn stack sau khi xong: `docker compose -p k5-day14-docker down`.
 
 ## Part 3: Cloud Deployment
 ### Exercise 3.1/3.2: URL + nền tảng
+Lớp K5 deploy chính agent Part 6 (`06-lab-complete/`), không deploy app mẫu `03-cloud-deployment/`.
+
+- **Nền tảng chính:** Render (Exercise 3.2): Web Service runtime Docker, Root Directory `06-lab-complete`, health check `/health`, cộng thêm Render Key Value (Redis).
+- **Public URL:** https://day14-production-agent-b1rf.onrender.com
+- **Biến môi trường đặt trên Render** (không ghi trong code): `AGENT_API_KEY`, `REDIS_URL`, `ENVIRONMENT=production`, `RATE_LIMIT_PER_MINUTE=10`, `DAILY_BUDGET_USD=10`; `PORT` do Render cấp.
+- **Railway (Exercise 3.1):** đã cài Railway CLI, đăng nhập, `railway init` / `railway up` từ `06-lab-complete/`, nhưng tài khoản bị chặn: `Your trial has expired. Please select a plan to continue using Railway.` Vì không dùng gói trả phí nên chuyển sang Render.
+
+**4 lệnh tự kiểm (CP6)** (`BASE` = URL trên, key che bằng biến):
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/health"     # 200
+curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/ready"      # 200
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/ask" -H 'Content-Type: application/json' -d '{"question":"Hello"}'   # 401
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/ask" -H 'Content-Type: application/json' -H "X-API-Key: $AGENT_API_KEY" -d '{"question":"Hello"}'   # 200
+```
+Kết quả: `200`, `200`, `401`, `200` (ảnh `screenshots/test.png`). Nội dung trả về: `/health` → `{"status":"ok"}`, `/ready` → `{"ready":true}` (Redis trên Render đã kết nối). Gửi key sai cũng trả `401`.
+
+Script chấm với URL public:
+```text
+python check_production_ready.py --public-url https://day14-production-agent-b1rf.onrender.com
+✅ Public URL: GET https://day14-production-agent-b1rf.onrender.com/health → 200
+Result: 12/12 tiêu chí đạt · 44/44 checks passed
+```
+
+Log trên Render cũng là JSON (`{"ts":"...","level":"INFO","message":"Agent startup","event":"startup"}`). Các dòng `GET /` → 404 trong log là do agent không có route trang chủ (chỉ có `/health`, `/ready`, `/ask`), không phải lỗi.
+
+Ảnh: `screenshots/dashboard.png`, `screenshots/running.png`, `screenshots/test.png`. Chi tiết trong `DEPLOYMENT.md`.
+
 ### So sánh railway.toml vs render.yaml
+`06-lab-complete/railway.toml`:
+```toml
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+healthcheckPath = "/health"
+restartPolicyType = "ON_FAILURE"
+```
+`06-lab-complete/render.yaml`:
+```yaml
+services:
+  - type: web
+    name: day14-production-agent
+    runtime: docker
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: AGENT_API_KEY
+        generateValue: true
+      - key: REDIS_URL
+        sync: false
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "10"
+      - key: DAILY_BUDGET_USD
+        value: "10"
+```
+
+| Điểm so sánh | `railway.toml` | `render.yaml` |
+|---|---|---|
+| Định dạng | TOML | YAML |
+| Phạm vi | Cấu hình build/deploy cho **một service đã có** (project và service tạo bằng CLI/dashboard) | **Blueprint (Infrastructure as Code):** khai báo cả danh sách `services`, mỗi service có `type: web`, `name`, `runtime` |
+| Cách build | `builder = "DOCKERFILE"` | `runtime: docker` |
+| Health check | `healthcheckPath = "/health"` | `healthCheckPath: /health` |
+| Khi lỗi | Có `restartPolicyType = "ON_FAILURE"` | Không khai báo (Render tự restart khi health check fail) |
+| Biến môi trường | Không nằm trong file, đặt bằng `railway variables` hoặc dashboard | Khai báo trong `envVars`; giá trị thường ghi thẳng, secret dùng `generateValue: true` (Render tự sinh `AGENT_API_KEY`) hoặc `sync: false` (người dùng nhập `REDIS_URL` trên dashboard, không lưu trong repo) |
+| Redis | Không khai báo; CLI chỉ phát hiện "service dependencies: redis" nhưng không tự tạo | Có thể khai báo thêm service Key Value trong cùng blueprint (file hiện tại chưa có nên tạo Redis bằng dashboard) |
+
+**Vì sao khác nhau:** Railway coi file config là phần bổ sung cho project được quản lý chủ yếu qua CLI/dashboard, nên file ngắn và chỉ lo build/deploy. Render Blueprint muốn mô tả toàn bộ hạ tầng trong repo để tạo lại được bằng một lần "New → Blueprint", nên có cả loại service và biến môi trường, kèm cơ chế để **không ghi secret vào file**. Cả hai đều dùng Dockerfile và health check `/health`, nên cùng một image chạy được trên cả hai nền tảng.
+
+Trải nghiệm thực tế: Railway yêu cầu gói trả phí khi hết trial; Render có gói Free nhưng service tự ngủ sau ~15 phút không có request (cold start 30–60 giây).
+
 ### Exercise 3.3: Cloud Run CI/CD pipeline
+Đọc `03-cloud-deployment/production-cloud-run/cloudbuild.yaml` và `service.yaml` (không cần tài khoản GCP):
+1. **Trigger:** khi push lên nhánh `main`, Cloud Build chạy pipeline trong `cloudbuild.yaml`.
+2. **Test:** bước `test` chạy trong `python:3.11-slim`, cài requirements và chạy `pytest`; test fail thì dừng pipeline, không build.
+3. **Build:** build Docker image, gắn 2 tag `gcr.io/$PROJECT_ID/ai-agent:$COMMIT_SHA` và `:latest`, dùng `--cache-from` image cũ để tận dụng layer cache.
+4. **Push:** đẩy image lên Container Registry.
+5. **Deploy:** `gcloud run deploy` image theo đúng `$COMMIT_SHA` lên Cloud Run (`asia-southeast1`), `min-instances=1` để tránh cold start, `max-instances=10`, 512Mi RAM, secret lấy từ **Secret Manager** (`--set-secrets`), không hardcode.
+
+`service.yaml` là bản khai báo IaC của chính service Cloud Run: autoscaling 1–10 instance, `containerConcurrency: 80`, giới hạn CPU/RAM, biến môi trường và secret (`secretKeyRef`), `livenessProbe` gọi `/health` và `startupProbe` gọi `/ready`. Mỗi bước có `waitFor`, nên thứ tự luôn là test → build → push → deploy.
 
 ## Part 4: API Security
 ### Exercise 4.1–4.3: Test results (401 / 200 / 429)
@@ -550,10 +628,11 @@ Một số dòng chi tiết đáng chú ý trong output:
 **Xử lý input sai:** body `/ask` được validate bằng Pydantic (`AskRequest.question: str = Field(..., min_length=1, max_length=2000)`), nên thiếu hoặc rỗng `question` thì FastAPI trả **422** với thông báo rõ ràng, không lộ stack trace.
 
 ## AI log
-| Nội dung | Ghi nhận |
-|---|---|
-| Phần được AI hỗ trợ | Part 1: anti-patterns và so sánh develop/production; Part 2: Dockerfile, multi-stage build và sơ đồ Compose; Part 4.3: kết quả rate limit; Part 5.1–5.5: health/readiness, graceful shutdown, stateless, load balancing và sơ đồ; Part 6: hoàn thiện agent production theo hợp đồng checker. |
-| Đã hỏi AI | Đọc mã nguồn/hướng dẫn để giải thích khái niệm, rà soát câu trả lời với kết quả terminal, chỉnh nội dung và trình bày bảng/sơ đồ Mermaid; triển khai các TODO của Part 6. |
-| AI đã làm | Cập nhật `MISSION_ANSWERS.md`; hoàn thiện auth, Redis rate limiter/cost guard, config môi trường, JSON logging, health/readiness, graceful shutdown, Docker multi-stage, Compose và Railway/Render config. Checker không bị sửa. |
-| Số liệu thực nghiệm | Các kết quả Part 1–5 trước đây do tôi cung cấp từ terminal. Với Part 6, AI chạy checker đầy đủ trong WSL: **12/12**, image **160 MB**, log JSON **17 dòng**, `docker stop` **0,7 giây**. Không tự tạo số đo. |
-| Kiểm tra đối chiếu | Checker đầy đủ xác nhận 43/43 checks passed. Tôi cần đọc lại phần code và kết quả đã ghi để có thể giải thích cách hoạt động trước khi nộp. |
+Công cụ: Claude (Claude Code). Không có số đo nào do AI tự đặt ra; mọi số liệu lấy từ lệnh chạy thật trên máy tôi.
+
+| Phần | Tôi nhờ AI | AI đã làm | 
+|---|---|---|
+| Part 1 | Vì sao `/ask` bản production lỗi 500 | Giải thích: bản này nhận JSON body, không nhận query 
+| Part 2, 4, 5 | Ghi kết quả vào bài | Tự chạy lệnh (curl, docker, `test_stateless.py`) lấy output thật và viết câu trả lời; sửa % kích thước image thành 85,9% |
+| Part 6 | Hoàn thiện các TODO | Viết code (auth, rate limit, cost guard, config, log JSON, health/ready, shutdown, Dockerfile, compose, deploy config); chạy checker | 
+| Part 3 | Deploy lên cloud | Hướng dẫn Railway (bị hết trial), chuyển sang Render |
